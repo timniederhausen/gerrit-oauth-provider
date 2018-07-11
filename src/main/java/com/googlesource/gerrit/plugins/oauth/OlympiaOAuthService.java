@@ -17,7 +17,6 @@ package com.googlesource.gerrit.plugins.oauth;
 import com.google.common.base.CharMatcher;
 import com.google.gerrit.extensions.annotations.PluginName;
 import com.google.gerrit.extensions.auth.oauth.*;
-import com.google.gerrit.reviewdb.client.AccountExternalId;
 import com.google.gerrit.server.OutputFormat;
 import com.google.gerrit.server.config.CanonicalWebUrl;
 import com.google.gerrit.server.config.PluginConfig;
@@ -38,6 +37,7 @@ class OlympiaOAuthService implements OAuthServiceProvider, OAuthLoginProvider {
   private static final Logger log =
       LoggerFactory.getLogger(OlympiaOAuthService.class);
   static final String CONFIG_SUFFIX = "-olympia-oauth";
+  private static final String OLYMPIA_PROVIDER_PREFIX = "olympia-oauth:";
 
   private final OlympiaApi api;
 
@@ -72,7 +72,7 @@ class OlympiaOAuthService implements OAuthServiceProvider, OAuthLoginProvider {
     final String login =
         GsonUtils.getStringElementOrThrow(jsonObject, "login");
 
-    return new OAuthUserInfo(AccountExternalId.SCHEME_EXTERNAL + login,
+    return new OAuthUserInfo(OLYMPIA_PROVIDER_PREFIX + login,
         login,
         GsonUtils.getStringElement(jsonObject, "email"),
         GsonUtils.getStringElement(jsonObject, "name"),
