@@ -20,6 +20,7 @@ import com.google.gerrit.extensions.auth.oauth.OAuthServiceProvider;
 import com.google.gerrit.extensions.auth.oauth.OAuthToken;
 import com.google.gerrit.extensions.auth.oauth.OAuthUserInfo;
 import com.google.gerrit.extensions.auth.oauth.OAuthVerifier;
+import com.google.gerrit.reviewdb.client.AccountExternalId;
 import com.google.gerrit.server.OutputFormat;
 import com.google.gerrit.server.config.CanonicalWebUrl;
 import com.google.gerrit.server.config.PluginConfig;
@@ -53,7 +54,6 @@ class OlympiaOAuthService implements OAuthServiceProvider {
   private static final String AUTHORIZATION_CODE = "authorization_code";
 
   private final String rootUrl;
-  private final boolean fixLegacyUserId;
   private final String clientId;
   private final String clientSecret;
   private final String callback;
@@ -67,7 +67,6 @@ class OlympiaOAuthService implements OAuthServiceProvider {
     PluginConfig cfg = cfgFactory.getFromGerritConfig(
         pluginName + CONFIG_SUFFIX);
     rootUrl = cfg.getString(InitOAuth.ROOT_URL);
-    fixLegacyUserId = cfg.getBoolean(InitOAuth.FIX_LEGACY_USER_ID, false);
     clientId = cfg.getString(InitOAuth.CLIENT_ID);
     clientSecret = cfg.getString(InitOAuth.CLIENT_SECRET);
     api = new OlympiaApi(rootUrl);
@@ -100,16 +99,19 @@ class OlympiaOAuthService implements OAuthServiceProvider {
       log.debug("User info response: {}", response.getBody());
     }
     if (userJson.isJsonObject()) {
-      JsonObject jsonObject = userJson.getAsJsonObject();
-      JsonElement id = jsonObject.get("id");
-      if (id == null || id.isJsonNull()) {
+      final JsonObject jsonObject = userJson.getAsJsonObject();
+      final String id = getStringElement(jsonObject, "id");
+      final String login = getStringElement(jsonObject, "login");
+      if (id == null)
         throw new IOException("Response doesn't contain id field");
-      }
-      return new OAuthUserInfo(OLYMPIA_PROVIDER_PREFIX + id.getAsString(),
-          getStringElement(jsonObject, "login"),
+      if (login == null)
+        throw new IOException("Response doesn't contain login field");
+
+      return new OAuthUserInfo(AccountExternalId.SCHEME_EXTERNAL + login,
+          login,
           getStringElement(jsonObject, "email"),
           getStringElement(jsonObject, "name"),
-          fixLegacyUserId ? id.getAsString() : null);
+          null);
     } else {
       throw new IOException(String.format(
           "Invalid JSON '%s': not a JSON Object", userJson));
