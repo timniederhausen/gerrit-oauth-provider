@@ -30,7 +30,6 @@ class InitOAuth implements InitStep {
   static final String ROOT_URL = "root-url";
   static final String REALM = "realm";
   static final String SERVICE_NAME = "service-name";
-  static String FIX_LEGACY_USER_ID_QUESTION = "Fix legacy user id, without oauth provider prefix?";
 
   private final ConsoleUI ui;
   private final Section googleOAuthProviderSection;
@@ -74,29 +73,24 @@ class InitOAuth implements InitStep {
         ui.yesno(true, "Use Google OAuth provider for Gerrit login ?");
     if (configureGoogleOAuthProvider) {
       configureOAuth(googleOAuthProviderSection);
-      googleOAuthProviderSection.string(FIX_LEGACY_USER_ID_QUESTION, FIX_LEGACY_USER_ID, "false");
     }
 
     boolean configueGitHubOAuthProvider =
         ui.yesno(true, "Use GitHub OAuth provider for Gerrit login ?");
     if (configueGitHubOAuthProvider) {
       configureOAuth(githubOAuthProviderSection);
-      githubOAuthProviderSection.string(FIX_LEGACY_USER_ID_QUESTION, FIX_LEGACY_USER_ID, "false");
     }
 
     boolean configureBitbucketOAuthProvider =
         ui.yesno(true, "Use Bitbucket OAuth provider for Gerrit login ?");
     if (configureBitbucketOAuthProvider) {
       configureOAuth(bitbucketOAuthProviderSection);
-      bitbucketOAuthProviderSection.string(
-          FIX_LEGACY_USER_ID_QUESTION, FIX_LEGACY_USER_ID, "false");
     }
 
     boolean configureCasOAuthProvider = ui.yesno(true, "Use CAS OAuth provider for Gerrit login ?");
     if (configureCasOAuthProvider) {
       casOAuthProviderSection.string("CAS Root URL", ROOT_URL, null);
       configureOAuth(casOAuthProviderSection);
-      casOAuthProviderSection.string(FIX_LEGACY_USER_ID_QUESTION, FIX_LEGACY_USER_ID, "false");
     }
 
     boolean configueFacebookOAuthProvider =
