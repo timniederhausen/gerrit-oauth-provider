@@ -98,5 +98,13 @@ class HttpModule extends HttpPluginModule {
           .annotatedWith(Exports.named(Office365OAuthService.CONFIG_SUFFIX))
           .to(Office365OAuthService.class);
     }
+
+    cfg = cfgFactory.getFromGerritConfig(
+        pluginName + OlympiaOAuthService.CONFIG_SUFFIX);
+    if (cfg.getString(InitOAuth.CLIENT_ID) != null) {
+      bind(OAuthServiceProvider.class)
+          .annotatedWith(Exports.named(OlympiaOAuthService.CONFIG_SUFFIX))
+          .to(OlympiaOAuthService.class);
+    }
   }
 }
