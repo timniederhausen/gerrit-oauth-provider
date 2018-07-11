@@ -16,49 +16,30 @@ package com.googlesource.gerrit.plugins.oauth;
 
 import com.google.common.base.CharMatcher;
 import com.google.gerrit.extensions.annotations.PluginName;
-import com.google.gerrit.extensions.auth.oauth.OAuthServiceProvider;
-import com.google.gerrit.extensions.auth.oauth.OAuthToken;
-import com.google.gerrit.extensions.auth.oauth.OAuthUserInfo;
-import com.google.gerrit.extensions.auth.oauth.OAuthVerifier;
+import com.google.gerrit.extensions.auth.oauth.*;
 import com.google.gerrit.reviewdb.client.AccountExternalId;
 import com.google.gerrit.server.OutputFormat;
 import com.google.gerrit.server.config.CanonicalWebUrl;
 import com.google.gerrit.server.config.PluginConfig;
 import com.google.gerrit.server.config.PluginConfigFactory;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
-import org.eclipse.jgit.util.Base64;
-import org.scribe.builder.ServiceBuilder;
-import org.scribe.model.*;
-import org.scribe.oauth.OAuthService;
+import org.scribe.exceptions.OAuthException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 
 @Singleton
-class OlympiaOAuthService implements OAuthServiceProvider {
+class OlympiaOAuthService implements OAuthServiceProvider, OAuthLoginProvider {
   private static final Logger log =
       LoggerFactory.getLogger(OlympiaOAuthService.class);
   static final String CONFIG_SUFFIX = "-olympia-oauth";
-  private final static String OLYMPIA_PROVIDER_PREFIX = "olympia-oauth:";
-  private static final String PROTECTED_RESOURCE_URL =
-      "%s/oauth2.0/profile";
 
-  private static final String GRANT_TYPE = "grant_type";
-  private static final String AUTHORIZATION_CODE = "authorization_code";
-
-  private final String rootUrl;
-  private final String clientId;
-  private final String clientSecret;
-  private final String callback;
   private final OlympiaApi api;
-  private final OAuthService service;
 
   @Inject
   OlympiaOAuthService(PluginConfigFactory cfgFactory,
@@ -66,72 +47,55 @@ class OlympiaOAuthService implements OAuthServiceProvider {
       @CanonicalWebUrl Provider<String> urlProvider) {
     PluginConfig cfg = cfgFactory.getFromGerritConfig(
         pluginName + CONFIG_SUFFIX);
-    rootUrl = cfg.getString(InitOAuth.ROOT_URL);
-    clientId = cfg.getString(InitOAuth.CLIENT_ID);
-    clientSecret = cfg.getString(InitOAuth.CLIENT_SECRET);
-    api = new OlympiaApi(rootUrl);
     String canonicalWebUrl = CharMatcher.is('/').trimTrailingFrom(
         urlProvider.get()) + "/";
-    callback = canonicalWebUrl + "oauth";
-    service = new ServiceBuilder()
-        .provider(api)
-        .apiKey(clientId)
-        .apiSecret(clientSecret)
-        .callback(callback)
-        .build();
+    api = new OlympiaApi(cfg.getString(InitOAuth.ROOT_URL),
+        cfg.getString(InitOAuth.CLIENT_ID),
+        cfg.getString(InitOAuth.CLIENT_SECRET),
+        canonicalWebUrl + "oauth");
   }
 
   @Override
   public OAuthUserInfo getUserInfo(OAuthToken token) throws IOException {
-    final String protectedResourceUrl =
-        String.format(PROTECTED_RESOURCE_URL, rootUrl);
-    OAuthRequest request = new OAuthRequest(Verb.GET, protectedResourceUrl);
-    request.addHeader(OAuthConstants.HEADER, "Bearer " + token.getToken());
-    Response response = request.send();
-    if (response.getCode() != HttpServletResponse.SC_OK) {
-      throw new IOException(String.format("Status %s (%s) for request %s",
-          response.getCode(), response.getBody(), request.getUrl()));
-    }
-    JsonElement userJson =
-        OutputFormat.JSON.newGson().fromJson(response.getBody(),
-            JsonElement.class);
-    if (log.isDebugEnabled()) {
-      log.debug("User info response: {}", response.getBody());
-    }
-    if (userJson.isJsonObject()) {
-      final JsonObject jsonObject = userJson.getAsJsonObject();
-      final String id = getStringElement(jsonObject, "id");
-      final String login = getStringElement(jsonObject, "login");
-      if (id == null)
-        throw new IOException("Response doesn't contain id field");
-      if (login == null)
-        throw new IOException("Response doesn't contain login field");
+    final String body = api.getProfile(token);
+    if (log.isDebugEnabled())
+      log.debug("User info response: {}", body);
 
-      return new OAuthUserInfo(AccountExternalId.SCHEME_EXTERNAL + login,
-          login,
-          getStringElement(jsonObject, "email"),
-          getStringElement(jsonObject, "name"),
-          null);
-    } else {
+    JsonElement userJson =
+        OutputFormat.JSON.newGson().fromJson(body, JsonElement.class);
+    if (!userJson.isJsonObject()) {
       throw new IOException(String.format(
           "Invalid JSON '%s': not a JSON Object", userJson));
     }
+
+    final JsonObject jsonObject = userJson.getAsJsonObject();
+    final String login =
+        GsonUtils.getStringElementOrThrow(jsonObject, "login");
+
+    return new OAuthUserInfo(AccountExternalId.SCHEME_EXTERNAL + login,
+        login,
+        GsonUtils.getStringElement(jsonObject, "email"),
+        GsonUtils.getStringElement(jsonObject, "name"),
+        null);
   }
 
   @Override
   public OAuthToken getAccessToken(OAuthVerifier rv) {
-    Verifier vi = new Verifier(rv.getValue());
-    return extractToken(getAccessToken(vi));
+    try {
+      return api.getAccessToken(rv.getValue());
+    } catch (IOException e) {
+      throw new OAuthException("I/O Error", e);
+    }
   }
 
   @Override
   public String getAuthorizationUrl() {
-    return service.getAuthorizationUrl(null);
+    return api.getAuthorizationUrl();
   }
 
   @Override
   public String getVersion() {
-    return service.getVersion();
+    return "2.0";
   }
 
   @Override
@@ -139,35 +103,11 @@ class OlympiaOAuthService implements OAuthServiceProvider {
     return "Olympia OAuth2";
   }
 
-  OAuthRequest makeTokenRequest() {
-    OAuthRequest request = new OAuthRequest(api.getAccessTokenVerb(),
-        api.getAccessTokenEndpoint());
-    final String auth = clientId + ":" + clientSecret;
-    request.addHeader(OAuthConstants.HEADER, "Basic " + String.valueOf(
-        Base64.encodeBytes(auth.getBytes())));
-    return request;
-  }
+  // OAuthLoginProvider
 
-  OAuthToken extractToken(String body) {
-    final Token to = api.getAccessTokenExtractor().extract(body);
-    return new OAuthToken(to.getToken(),
-        to.getSecret(), to.getRawResponse());
-  }
-
-  private String getStringElement(JsonObject o, String name)
+  @Override
+  public OAuthUserInfo login(String username, String secret)
       throws IOException {
-    JsonElement elem = o.get(name);
-    if (elem == null || elem.isJsonNull())
-      return null;
-
-    return elem.getAsString();
-  }
-
-  private String getAccessToken(Verifier verifier) {
-    Request request = makeTokenRequest();
-    request.addBodyParameter(GRANT_TYPE, AUTHORIZATION_CODE);
-    request.addBodyParameter(OAuthConstants.CODE, verifier.getValue());
-    request.addBodyParameter(OAuthConstants.REDIRECT_URI, callback);
-    return request.send().getBody();
+    return getUserInfo(api.getAccessToken(username, secret));
   }
 }
